@@ -1,16 +1,30 @@
-from flask import Flask
+# api/app.py
+from flask import Flask, jsonify
+from prometheus_flask_exporter import PrometheusMetrics
 
-app = Flask(__name__)
+def create_app():
+    """Cria e configura uma instância da aplicação Flask."""
+    app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "API Flask está rodando!🚀🚀🚀🚀🚀🚀"
+    # Expõe as métricas padrão do Flask (/metrics)
+    PrometheusMetrics(app)
+
+    @app.route('/')
+    def home():
+        return jsonify({
+            "status": "online",
+            "message": "API Flask está rodando!"
+        })
+
+    @app.route('/health')
+    def health():
+        """Endpoint de Health Check."""
+        return jsonify({"status": "ok"}), 200
+
+    return app
+
+app = create_app()
 
 if __name__ == "__main__":
-    print("🚀 Iniciando API Flask na porta 8085...")
-    print("📋 Endpoints disponíveis:")
-    print("   GET  /health")
-    print("   GET  /")
-    print("   CRUD /api/users")
-    print("   CRUD /api/products")
+    # A porta 8085 será gerenciada pelo Gunicorn no Docker
     app.run(host="0.0.0.0", port=8085, debug=True)

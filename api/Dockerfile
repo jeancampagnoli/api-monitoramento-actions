@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir --no-index --find-links=/vendor -r requirements.t
 
 COPY . .
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8085", "app:app"]
