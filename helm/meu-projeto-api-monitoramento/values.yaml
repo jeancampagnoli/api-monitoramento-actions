@@ -1,0 +1,14 @@
+# values.yaml
+
+# Default values for meu-projeto-api-monitoramento.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+api:
+  replicaCount: 1
+  image:
+    repository: kennethreitz/httpbin
+    pullPolicy: IfNotPresent
+    tag: ""
+  service:
+    port: 5000

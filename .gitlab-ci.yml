@@ -1,0 +1,115 @@
+# .gitlab-ci.yml
+
+# Define os estágios da pipeline. A ordem aqui é a ordem de execução.
+stages:
+  - build
+  - test
+  - deploy
+
+# Variáveis globais disponíveis para todos os jobs
+variables:
+  # Define o nome da imagem Docker que será construída e publicada.
+  # $CI_REGISTRY_IMAGE é uma variável predefinida do GitLab que aponta para o registro do seu projeto.
+  IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+# ==============================================================================
+# Estágio de Build
+# ==============================================================================
+
+build_image:
+  stage: build
+  # Usa uma imagem Docker que já tem o Docker instalado (Docker-in-Docker)
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    # Loga no registro de contêineres do GitLab usando variáveis de CI/CD predefinidas
+    - echo "Logging into GitLab Container Registry..."
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    # Constrói a imagem da API a partir do Dockerfile no diretório 'api'
+    - echo "Building Docker image..."
+    - docker build -t $IMAGE_NAME ./api
+    # Publica a imagem construída no registro do GitLab
+    - echo "Pushing Docker image to registry..."
+    - docker push $IMAGE_NAME
+  rules:
+    # Executa este job para qualquer branch, exceto em pipelines agendadas
+    - if: '$CI_PIPELINE_SOURCE != "schedule"'
+
+# ==============================================================================
+# Estágio de Teste
+# ==============================================================================
+
+# Job para executar testes unitários (exemplo)
+unit_tests:
+  stage: test
+  image: python:3.9
+  script:
+    # Instala as dependências da sua API
+    - pip install -r api/requirements.txt
+    # Instala o Pytest para rodar os testes
+    - pip install pytest
+    # Comando para rodar os testes.
+    # NOTA: Você precisará criar os testes no seu projeto.
+    - pytest api/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "schedule"'
+
+scan_image_vulnerabilities:
+  stage: test
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - echo "Scanning Docker image for vulnerabilities..."
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed $IMAGE_NAME
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "schedule"'
+
+# Job para executar a análise do SonarQube
+sonarqube_scan:
+  stage: test
+  # Usa a imagem oficial do sonar-scanner
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    # Executa o scanner. As variáveis $SONAR_HOST_URL e $SONAR_TOKEN
+    # devem ser configuradas nas variáveis de CI/CD do seu projeto no GitLab.
+    - sonar-scanner -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN -Dsonar.projectKey=meu-projeto-api -Dsonar.sources=.
+  rules:
+    # Executa apenas para o branch 'main' para não sobrecarregar o SonarQube
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ==============================================================================
+# Estágio de Deploy
+# ==============================================================================
+
+deploy_to_k8s:
+  stage: deploy
+  # Usa uma imagem que contém as ferramentas 'helm' e 'kubectl'
+  image:
+    name: registry.gitlab.com/gitlab-org/cluster-integration/cluster-applications:latest
+    entrypoint: [""]
+  script:
+    - echo "Deploying to Kubernetes cluster..."
+    # Comando do Helm para fazer o deploy.
+    # Ele atualiza o release 'meu-release' ou o cria se não existir.
+    # O mais importante é que ele usa --set para sobrescrever os valores da imagem,
+    # garantindo que a imagem que acabamos de construir ($IMAGE_NAME) seja usada.
+    - helm upgrade --install meu-release ./helm/meu-projeto-api-monitoramento \
+        --namespace monitoramento \
+        --create-namespace \
+        --set api.image.repository=$CI_REGISTRY_IMAGE \
+        --set api.image.tag=$CI_COMMIT_SHA \
+        --set api.image.pullPolicy=Always
+  # Configuração de ambiente para o Kubernetes
+  environment:
+    name: production
+    url: http://meu-app.minha-url.com # Substitua pela URL do seu app
+  # Regras para executar este job
+  rules:
+    # Executa apenas para o branch 'main'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      # Torna o deploy manual. Você precisará clicar no botão "play" no GitLab
+      # para iniciar o deploy. Remova a linha abaixo para deploy automático.
+      when: manual
+...

@@ -1,0 +1,23 @@
+# prometheus.yml
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is 1m.
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090'] # O próprio Prometheus
+
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node-exporter:9100'] # O nome do serviço Docker Compose para o Node Exporter
+
+  - job_name: 'api_app'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:8085'] # O nome do serviço Docker Compose para sua API
+
+  - job_name: 'cadvisor'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['cadvisor:8080']  # Usa a porta INTERNA do container (8080)

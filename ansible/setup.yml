@@ -1,0 +1,116 @@
+---
+# ansible/setup.yml
+# Este playbook orquestra o ciclo de vida completo do ambiente de desenvolvimento.
+
+- name: Preparar Host e Provisionar Cluster Kind
+  hosts: localhost
+  gather_facts: yes
+  become: yes
+
+  tasks:
+    - name: 1. Configurar vm.max_map_count para o SonarQube/Elasticsearch
+      ansible.builtin.sysctl:
+        name: vm.max_map_count
+        value: '262144'
+        sysctl_file: /etc/sysctl.conf
+        state: present
+        reload: yes
+      when: ansible_facts['system'] == "Linux"
+      tags:
+        - host_setup
+
+    - name: 2. Verificar se o cluster Kind 'monitoramento' já existe
+      ansible.builtin.command: kind get clusters
+      register: kind_clusters
+      changed_when: false
+      become: no
+      ignore_errors: yes
+      tags:
+        - kind
+
+    - name: 3. Criar o cluster Kind 'monitoramento' se ele não existir
+      ansible.builtin.command: kind create cluster --name monitoramento --config ../k8s/kind-config.yaml
+      when: "'monitoramento' not in kind_clusters.stdout"
+      become: no
+      tags:
+        - kind
+
+- name: Construir, Deployar e Analisar a Aplicação
+  hosts: localhost
+  gather_facts: no
+  become: no # A maioria das tarefas a seguir não precisa de sudo
+
+  tasks:
+    - name: 4. Construir a imagem Docker da API
+      community.docker.docker_image:
+        name: meu-projeto-api:latest
+        source: build
+        build:
+          path: "{{ playbook_dir }}/../api"
+      tags:
+        - build
+
+    - name: 4.5. Escanear imagem Docker local com Trivy
+      community.docker.docker_container:
+        name: trivy-scanner-temp
+        image: aquasec/trivy:latest
+        auto_remove: yes
+        mounts:
+          - source: /var/run/docker.sock
+            target: /var/run/docker.sock
+            type: bind
+        command: >
+          image --severity HIGH,CRITICAL --ignore-unfixed meu-projeto-api:latest
+      tags:
+        - scan-image
+
+    - name: 5. Carregar a imagem Docker da API no cluster Kind
+      ansible.builtin.command: kind load docker-image meu-projeto-api:latest --name monitoramento
+      changed_when: false # O comando retorna output mesmo se nada mudar
+      tags:
+        - build
+        - deploy
+
+    - name: 6. Deployar/Atualizar a aplicação com Helm
+      community.kubernetes.helm:
+        name: meu-release
+        chart: "{{ playbook_dir }}/../helm/meu-projeto-api-monitoramento"
+        release_namespace: monitoramento
+        create_namespace: yes
+        upgrade: yes
+        wait: yes
+        values:
+          api:
+            image:
+              repository: meu-projeto-api
+              tag: latest
+              pullPolicy: Never # Usar a imagem local, não puxar de um registro
+      tags:
+        - deploy
+
+    - name: 7. Garantir que os serviços do docker-compose estejam ativos para o SonarQube
+      community.docker.docker_compose_v2:
+        project_src: "{{ playbook_dir }}/.."
+        state: present
+      tags:
+        - scan
+
+    - name: 8. Executar análise do SonarQube
+      community.docker.docker_container:
+        name: sonar-scanner-temp
+        image: sonarsource/sonar-scanner-cli
+        auto_remove: yes
+        command: >
+          sonar-scanner
+          -Dsonar.host.url=http://sonarqube:9000
+          -Dsonar.projectKey=meu-projeto-api
+          -Dsonar.sources=.
+          -Dsonar.login={{ lookup('env', 'SONAR_TOKEN') }}
+        network: meu_projeto_api_monitoramento_security_network
+        mounts:
+          - source: "{{ playbook_dir }}/.."
+            target: /usr/src
+            type: bind
+      tags:
+        - scan
+...
